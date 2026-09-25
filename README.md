@@ -1,0 +1,2 @@
+# pantoea-genome-mining
+Descripción: "
