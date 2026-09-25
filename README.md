@@ -1,4 +1,4 @@
-# Pantoea ananatis 31npA-Arg1 — genome mining
+# Pantoea ananatis 31npA-Arg1-genome mining
 
 Python script to parse a PGAP-annotated GenBank file and extract
 genes of interest (virulence, secretion systems, toxin–antitoxin
