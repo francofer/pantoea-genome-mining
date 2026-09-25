@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 analisis.py
-Analiza un archivo GenBank de PGAP para Pantoea ananatis.
-Genera un reporte de texto y tablas CSV.
-Uso: python analisis.py -i archivo.gb -t 4 -o results
+Parse a PGAP-annotated GenBank file for Pantoea ananatis.
+Generates a text report and CSV tables.
+
+Usage: python analisis.py -i genome.gb -t 4 -o results
 """
 
 import argparse
@@ -13,27 +14,27 @@ import sys
 from collections import OrderedDict
 from Bio import SeqIO
 
-# Patrones para genes de interés (case-insensitive)
+# Patterns for genes of interest (case-insensitive)
 INTERESTING_PATTERNS = [
-    # Virulencia y secreción
+    # Virulence and secretion
     r"virulence", r"toxin", r"antitoxin", r"secretion", r"effector",
     r"Tss[A-Z]", r"VgrG", r"Hcp", r"Tag[HF]", r"Dot[ADHMIK]", r"IcmK",
     r"Tra[YH]", r"GspE", r"type I", r"type II", r"type III", r"type IV", r"type VI",
-    # Resistencia
+    # Resistance
     r"resistance", r"efflux", r"multidrug", r"antibiotic", r"tellurite",
     r"arsenate", r"bleomycin", r"Ter[BC]", r"TehB", r"MarB", r"Emr[AB]", r"HlyD",
-    # Toxina-antitoxina
+    # Toxin-antitoxin
     r"toxin", r"antitoxin", r"Hip[AB]", r"Maz[EF]", r"Rel[BE]", r"ParE",
     r"Vap[BC]", r"PrlF", r"YhaV", r"SymE", r"RatA", r"Gho[ST]", r"CbtA",
     r"YeeU", r"HicB", r"HigA", r"VagC", r"BsmA", r"YmgB", r"LrgA", r"TisB", r"VENN",
-    # Flagelo y motilidad
+    # Flagellum and motility
     r"flagell", r"Flg[A-N]", r"Fli[A-Z]", r"Flh[A-D]", r"Mot[AB]", r"chemotaxis",
-    # Biofilm y estrés
+    # Biofilm and stress
     r"biofilm", r"acid resistance", r"peroxide", r"oxidative",
-    # Otros factores de virulencia
+    # Other virulence factors
     r"Srf[BC]", r"MsgA", r"TspB", r"BrkB", r"murein", r"hemolysin",
     r"adhesin", r"invasion", r"capsule",
-    # Conjugación
+    # Conjugation
     r"conjug", r"pilus", r"PilN", r"DotD", r"TraH",
 ]
 
@@ -47,12 +48,16 @@ CATEGORY_MAP = [
     (r"virulence|Srf|MsgA|TspB|BrkB|murein|hemolysin|adhesin|invasion|capsule", "Virulence factor"),
 ]
 
+
 def is_hypothetical(product):
+    """Return True if the product description matches hypothetical keywords."""
     if not product:
         return False
     return bool(re.search(r"hypothetical|uncharacterized", product, re.I))
 
+
 def categorize(product):
+    """Assign a functional category based on the product description."""
     if not product:
         return "Other"
     for pattern, cat in CATEGORY_MAP:
@@ -60,30 +65,40 @@ def categorize(product):
             return cat
     return "Other"
 
+
 def is_interesting(product, note=""):
+    """Return True if the product or note matches any pattern of interest."""
     text = (product + " " + note).lower()
     for pat in INTERESTING_PATTERNS:
         if re.search(pat, text, re.I):
             return True
     return False
 
+
 def gc_content(seq):
+    """Return GC content (%) of a sequence, rounded to 2 decimals."""
     seq = seq.upper()
     gc = (seq.count('G') + seq.count('C')) / len(seq) * 100
     return round(gc, 2)
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Analiza GenBank de PGAP para Pantoea ananatis")
-    parser.add_argument("-i", "--input", required=True, help="Archivo GenBank de entrada")
-    parser.add_argument("-t", "--threads", type=int, default=1, help="Número de hilos (no usado, por compatibilidad)")
-    parser.add_argument("-o", "--output", default="results", help="Prefijo de salida")
+    parser = argparse.ArgumentParser(
+        description="Parse a PGAP-annotated GenBank file for Pantoea ananatis"
+    )
+    parser.add_argument("-i", "--input", required=True,
+                        help="Input GenBank file")
+    parser.add_argument("-t", "--threads", type=int, default=1,
+                        help="Number of threads (not used, kept for compatibility)")
+    parser.add_argument("-o", "--output", default="results",
+                        help="Output prefix")
     args = parser.parse_args()
 
     records = list(SeqIO.parse(args.input, "genbank"))
     if not records:
-        sys.exit("No se encontraron registros en el archivo GenBank.")
+        sys.exit("No records found in the GenBank file.")
 
-    # Ordenar por tamaño: el más grande es el cromosoma
+    # Sort by size: the largest record is assumed to be the chromosome
     records_sorted = sorted(records, key=lambda r: len(r), reverse=True)
     replicon_info = {}
     for i, rec in enumerate(records_sorted):
@@ -112,7 +127,7 @@ def main():
             "rRNA": 0,
             "tRNA": 0,
             "hypothetical": 0,
-            "other": 0
+            "other": 0,
         }
         for feature in rec.features:
             ft = feature.type
@@ -147,7 +162,7 @@ def main():
                     "hypothetical": "yes" if hypothetical else "no",
                     "pseudogene": "yes" if is_pseudo else "no",
                     "note": note,
-                    "category": categorize(product) if not hypothetical else "Hypothetical"
+                    "category": categorize(product) if not hypothetical else "Hypothetical",
                 }
                 all_cds.append(cds_entry)
                 if not is_pseudo and not hypothetical and is_interesting(product, note):
@@ -166,10 +181,10 @@ def main():
             "contig": rec.id,
             "length": length,
             "gc": gc,
-            "features": counts
+            "features": counts,
         }
 
-    # Reporte de texto
+    # Text report
     txt_file = f"{args.output}.txt"
     with open(txt_file, "w") as f:
         f.write("Genome Annotation Report for Pantoea ananatis\n")
@@ -219,12 +234,12 @@ def main():
                 if g['note']:
                     f.write(f"  Note: {g['note']}\n")
         else:
-            f.write("No se encontraron genes de interés.\n")
+            f.write("No genes of interest were found.\n")
 
         f.write("\n" + "=" * 70 + "\n")
         f.write("End of report\n")
 
-    # CSV: todos los CDS
+    # CSV: all CDSs
     cds_csv = f"{args.output}_all_CDS.csv"
     if all_cds:
         with open(cds_csv, "w", newline="") as f:
@@ -232,7 +247,7 @@ def main():
             writer.writeheader()
             writer.writerows(all_cds)
 
-    # CSV: genes de interés
+    # CSV: genes of interest
     interest_csv = f"{args.output}_genes_of_interest.csv"
     if interesting_genes:
         with open(interest_csv, "w", newline="") as f:
@@ -240,9 +255,10 @@ def main():
             writer.writeheader()
             writer.writerows(interesting_genes)
 
-    print(f"Reporte escrito en {txt_file}")
-    print(f"Tabla de todos los CDS en {cds_csv}")
-    print(f"Tabla de genes de interés en {interest_csv}")
+    print(f"Report written to {txt_file}")
+    print(f"All CDS table written to {cds_csv}")
+    print(f"Genes-of-interest table written to {interest_csv}")
+
 
 if __name__ == "__main__":
     main()
