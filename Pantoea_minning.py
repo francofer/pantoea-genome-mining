@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
 """
-analisis.py
+Pantoea_minning.py  (v1.2)
 Parse a PGAP-annotated GenBank file for Pantoea ananatis.
 Generates a text report and CSV tables.
+
+v1.2 — see CHANGELOG.md for the full history.
+
+v1.1 — fixes in the functional classification:
+  * CATEGORY_MAP reordered: toxin-antitoxin is evaluated BEFORE secretion, so
+    "type I addiction module" and "type II toxin-antitoxin system" are no
+    longer captured by the secretion pattern.
+  * word boundaries added to gene-symbol patterns: with re.IGNORECASE,
+    r"Rel[BE]" matched "release" and r"Fli[A-Z]" matched "flippase".
+  * "murein" moved from the virulence pattern to a cell-wall category.
+  * duplicated r"toxin" removed from INTERESTING_PATTERNS.
+  * categories added that previously had to be curated by hand:
+    LPS modification, Cell wall/murein, Transport, Metabolism, Translation,
+    Defense, Mobile genetic element.
+  * new "group" column with the 8-category regrouping used in the figures.
 
 Usage: python analisis.py -i genome.gb -t 4 -o results
 """
@@ -18,35 +33,78 @@ from Bio import SeqIO
 INTERESTING_PATTERNS = [
     # Virulence and secretion
     r"virulence", r"toxin", r"antitoxin", r"secretion", r"effector",
-    r"Tss[A-Z]", r"VgrG", r"Hcp", r"Tag[HF]", r"Dot[ADHMIK]", r"IcmK",
-    r"Tra[YH]", r"GspE", r"type I", r"type II", r"type III", r"type IV", r"type VI",
+    r"\bTss[A-Z]\b", r"VgrG", r"Hcp", r"\bTag[HF]\b", r"\bDot[ADHMIK]\b", r"IcmK",
+    r"\bTra[A-Z]\b", r"\bTrb[A-Z]\b", r"\bGsp[A-O]\b", r"type (I|II|III|IV|VI) secretion",
     # Resistance
     r"resistance", r"efflux", r"multidrug", r"antibiotic", r"tellurite",
-    r"arsenate", r"bleomycin", r"Ter[BC]", r"TehB", r"MarB", r"Emr[AB]", r"HlyD",
+    r"arsenate", r"bleomycin", r"\bTer[BC]\b", r"TehB", r"MarB", r"\bEmr[AB]\b", r"HlyD",
     # Toxin-antitoxin
-    r"toxin", r"antitoxin", r"Hip[AB]", r"Maz[EF]", r"Rel[BE]", r"ParE",
-    r"Vap[BC]", r"PrlF", r"YhaV", r"SymE", r"RatA", r"Gho[ST]", r"CbtA",
+    r"antitoxin", r"addiction module", r"VENN motif", r"\btoxin\b", r"\bHip[AB]\b", r"\bMaz[EF]\b", r"\bRel[BE]F?\b", r"\bParD?E\b",
+    r"\bVap[BC]\b", r"PrlF", r"YhaV", r"SymE", r"RatA", r"\bGho[ST]\b", r"CbtA",
     r"YeeU", r"HicB", r"HigA", r"VagC", r"BsmA", r"YmgB", r"LrgA", r"TisB", r"VENN",
     # Flagellum and motility
-    r"flagell", r"Flg[A-N]", r"Fli[A-Z]", r"Flh[A-D]", r"Mot[AB]", r"chemotaxis",
+    r"flagell", r"\bFlg[A-N]\b", r"\bFli[A-Z]\b", r"\bFlh[A-D]\b", r"\bMot[AB]\b", r"chemotaxis", r"methyl-accepting",
     # Biofilm and stress
     r"biofilm", r"acid resistance", r"peroxide", r"oxidative",
     # Other virulence factors
-    r"Srf[BC]", r"MsgA", r"TspB", r"BrkB", r"murein", r"hemolysin",
-    r"adhesin", r"invasion", r"capsule",
+    r"\bSrf[BC]\b", r"MsgA", r"TspB", r"BrkB", r"murein", r"hemolysin",
+    r"adhesin", r"invasion", r"capsule", r"autotransporter", r"\bTam[AB]\b",
+    # Defence and mobile elements
+    r"restriction-modification", r"restriction endonuclease", r"CRISPR",
+    r"prepilin", r"\bT6SS\b",
     # Conjugation
-    r"conjug", r"pilus", r"PilN", r"DotD", r"TraH",
+    r"conjug", r"pil(us|in)", r"\bPil[A-Z]\b", r"fimbri", r"\bCfa[A-E]\b", r"\bCbl[A-D]\b",
 ]
 
 CATEGORY_MAP = [
-    (r"secretion|Tss|VgrG|Hcp|Tag|Dot|Icm|GspE|type (I|II|III|IV|VI)", "Secretion system"),
-    (r"toxin|antitoxin|Hip|Maz|Rel|ParE|Vap|PrlF|YhaV|SymE|RatA|Gho|CbtA|YeeU|HicB|HigA|VagC|BsmA|YmgB|LrgA|TisB|VENN", "Toxin-antitoxin"),
-    (r"resistance|efflux|multidrug|antibiotic|tellurite|arsenate|bleomycin|Ter|TehB|MarB|Emr|HlyD", "Resistance"),
-    (r"flagell|Flg|Fli|Flh|Mot|chemotaxis", "Motility/flagellum"),
-    (r"biofilm|acid resistance|peroxide|oxidative", "Biofilm/stress"),
-    (r"conjug|pilus|PilN|DotD|TraH", "Conjugation/pili"),
-    (r"virulence|Srf|MsgA|TspB|BrkB|murein|hemolysin|adhesin|invasion|capsule", "Virulence factor"),
+    (r"biofilm|\b(BsmA|YmgB|AriR|CidA|LrgA)\b", "Biofilm/stress"),
+    (r"antitoxin|addiction module|VENN motif|pre-toxin|^toxin$|\btoxin\b.*\bsystem\b|"
+     r"\b(Hip[AB]|Maz[EF]|Rel[BE]F?|ParDE|ParE|Vap[BC]|PrlF|YhaV|SymE|RatA|"
+     r"Gho[ST]|CbtA|YeeU|HicB|HigA|VagC|TisB)\b", "Toxin-antitoxin"),
+    (r"conjugat|prepilin|\bpil(us|in|T|W|N|Q)\b|fimbri|adhesin|relaxase|mobilization protein|usher|"
+     r"\b(Tra[A-Z]|Trb[A-Z]|Cfa[A-E]|Cbl[A-D])\b", "Conjugation/pili"),
+    (r"secretion|\bT6SS\b|autotransporter|\bTam[AB]\b|\b(Tss[A-M]|VgrG|Hcp|Tag[A-Z]|Dot[A-Z]|Icm[A-Z]|Gsp[A-O]|HlyB|HlyD|PulD|Ssp[0-9])\b",
+     "Secretion system"),
+    (r"flagell|chemotaxis|methyl-accepting|\b(Flg[A-N]|Fli[A-Z]|Flh[A-D]|Mot[AB]|Che[ABRWYZ])\b",
+     "Motility/flagellum"),
+    (r"lipopolysaccharide|\bLPS\b|O-antigen|flippase|\b(Arn[A-F]|Lpx[A-Z]|Waa[A-Z])\b",
+     "LPS modification"),
+    (r"murein|peptidoglycan|\bMpaA\b|cell wall|D-alanyl|\bamidase\b", "Cell wall/murein"),
+    (r"restriction|CRISPR|\bCas[0-9]|abortive infection|anti-phage", "Defense"),
+    (r"resistance|efflux|multidrug|antibiotic|tellurite|arsenate|bleomycin|beta-lactamase|"
+     r"\b(Ter[A-F]|TehB|Mar[ABR]|Emr[ABKY]|Acr[AB]|TolC)\b", "Resistance"),
+    (r"peroxide|oxidative|catalase|superoxide|universal stress|cold shock|heat shock|"
+     r"acid resistance|chaperone", "Biofilm/stress"),
+    (r"transposase|integrase|recombinase|insertion sequence|\bIS[0-9]", "Mobile genetic element"),
+    (r"hemolysin|invasion|capsule|virulence|\b(Srf[BC]|MsgA|TspB|BrkB|GfcC|SirB)\b",
+     "Virulence factor"),
+    (r"transporter|permease|symporter|antiporter|\bABC\b", "Transport"),
+    (r"dehydratase|dehydrogenase|\bsynthase\b|\bsynthetase\b|isomerase|\btransferase\b|"
+     r"\bkinase\b|\blyase\b|\bhydrolase\b|\breductase\b|\bmutase\b|carbonic anhydrase|"
+     r"aminopeptidase|dehalogenase|cyclo-ligase", "Metabolism"),
+    (r"release factor|ribosom|\btRNA\b|translation", "Translation"),
 ]
+
+
+
+# Reagrupacion de las categorias finas en 8 grupos para figuras y tablas
+GROUP = {
+    "Secretion system": "Secretion systems",
+    "Motility/flagellum": "Motility and chemotaxis",
+    "Toxin-antitoxin": "Toxin-antitoxin systems",
+    "Conjugation/pili": "Adhesion and conjugation",
+    "Mobile genetic element": "Adhesion and conjugation",
+    "Resistance": "Resistance and defence",
+    "Defense": "Resistance and defence",
+    "Cell wall/murein": "Cell envelope and LPS",
+    "LPS modification": "Cell envelope and LPS",
+    "Biofilm/stress": "Biofilm and stress",
+    "Virulence factor": "Other virulence-associated",
+    "Metabolism": "Other virulence-associated",
+    "Transport": "Other virulence-associated",
+    "Translation": "Other virulence-associated",
+    "Other": "Other virulence-associated",
+}
 
 
 def is_hypothetical(product):
@@ -164,6 +222,7 @@ def main():
                     "note": note,
                     "category": categorize(product) if not hypothetical else "Hypothetical",
                 }
+                cds_entry["group"] = GROUP.get(cds_entry["category"], "Other virulence-associated")
                 all_cds.append(cds_entry)
                 if not is_pseudo and not hypothetical and is_interesting(product, note):
                     interesting_genes.append(cds_entry)
